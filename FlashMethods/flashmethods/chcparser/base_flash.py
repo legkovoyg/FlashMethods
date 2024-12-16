@@ -2,7 +2,7 @@ import abc
 
 import numpy as np
 from interfaces import base_equation
-from dtos import equation_dto, fluid_dto
+import equation_dto, fluid_dto
 
 
 class Flash(base_equation.Equation):
