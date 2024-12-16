@@ -423,7 +423,7 @@ class MixtureDataExtractor:
         print(self.data.get('density_liq_phase', np.array([])))
 
 if __name__ == "__main__":
-    file_path = r"C:\Users\User\PycharmProjects\FlashMethods\FlashMethods\flashmethods\chcparser\mixtures\FLASHtest3.CHC"
+    file_path = r"mixtures\FLASHtest3.CHC"
     extractor = MixtureDataExtractor(file_path)
     
     # Извлечение данных для SRK

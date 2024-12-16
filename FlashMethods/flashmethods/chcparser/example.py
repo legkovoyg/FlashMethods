@@ -7,7 +7,7 @@ from openpyxl import Workbook
 
 
 # Инициализация парсера
-file_path = "C:/Users/User/PycharmProjects/FlashMethods/FlashMethods/flashmethods/testdomain/mixtures/FLASHtest10.CHC"
+file_path = "mixtures/FLASHtest1.CHC"
 extractor = prs.MixtureDataExtractor(file_path)
 data_srk = extractor.extract_all_srk()
 extractor.print_data_srk()
