@@ -1,10 +1,67 @@
 import abc
 import logging
+import functools
 import numpy as np
-from dtos import equation_dto
-from base_flash import Flash
+from flashmethods.dtos import equation_dto
+from flashmethods.new_domain.base_flash import Flash
+
 
 logger = logging.getLogger(__name__)
+# Настройка логгера
+logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+
+
+import functools
+import inspect
+import os
+
+
+def truncate_array(arr):
+    if isinstance(arr, np.ndarray):
+        if arr.size > 10:
+            return f"{arr[:5].tolist()}, ..., {arr[-5:].tolist()}"
+    return arr
+
+
+def log_function(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # Получаем информацию о файле
+        file_path = inspect.getfile(func)
+        file_name = os.path.basename(file_path)
+
+        # Начало
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Файл: {file_name}")
+        logger.info(f"Функция: {func.__name__}")
+        logger.info(f"Начало выполнения")
+
+        # Входные данные
+        if len(args) > 1:  # Пропускаем self
+            truncated_args = tuple(truncate_array(arg) for arg in args[1:])
+            # logger.info(f"Входные позиционные аргументы: {truncated_args}")
+
+        if kwargs:
+            truncated_kwargs = {k: truncate_array(v) for k, v in kwargs.items()}
+            # logger.info(f"Входные именованные аргументы: {truncated_kwargs}")
+
+        try:
+            # Выполнение функции
+            result = func(*args, **kwargs)
+
+            # Выходные данные
+            truncated_result = truncate_array(result)
+            # logger.info(f"Выходные данные: {truncated_result}")
+        except Exception as e:
+            logger.exception(f"Неожиданная ошибка: {str(e)}")
+            raise
+        finally:
+            logger.info(f"{'='*50}")
+
+        return result
+
+    return wrapper
+
 
 class EOSFlash(Flash):
     """
@@ -16,8 +73,17 @@ class EOSFlash(Flash):
     @abc.abstractmethod
     def _init_eos_parameters(self):
         """
-        Инициализирует параметры уравнения состояния, такие как ac_i, psi_i, alpha_i, a_i, b_i, c_i (если нужно).
-        Должен быть переопределён в потомках, так как PR, SRK и их Peneloux-версии рассчитывают эти параметры по-разному.
+        Инициализирует параметры уравнения состояния.
+
+        Возвращает:
+            tuple:
+                - a_i (ndarray): Параметр "a" для каждого компонента
+                - b_i (ndarray): Параметр "b" для каждого компонента
+                - c_i (ndarray): Параметр Peneloux (для Peneloux-версий) или None (для обычных)
+                - BIPs (ndarray): Бинарные параметры взаимодействия
+                - psi_i (ndarray): Коэффициенты для расчёта параметра альфа
+                - ac_i (ndarray): Значения параметра "a" при критических условиях
+                - params (tuple): Дополнительные параметры для расчёта фугитивности
         """
         pass
 
@@ -30,9 +96,10 @@ class EOSFlash(Flash):
         """
         pass
 
+    @log_function
     def _perform_stability_check(self, fz_i, Z_init, K_i, b_i, c_params):
         """
-        Выполняет проверку термодинамической стабильности газовой и жидкой фаз 
+        Выполняет проверку термодинамической стабильности газовой и жидкой фаз
         для уравнений состояния (EOS).
 
         Параметры:
@@ -40,7 +107,7 @@ class EOSFlash(Flash):
             Z_init (float): Начальное значение коэффициента сжимаемости (Z-фактора).
             K_i (ndarray): Начальные коэффициенты распределения компонентов между фазами.
             b_i (ndarray): Параметры "b" для каждого компонента.
-            c_params (tuple): Дополнительные параметры уравнения состояния, 
+            c_params (tuple): Дополнительные параметры уравнения состояния,
                             такие как матрица взаимодействий (c_a_i) и параметры "b_i" и "c_i".
 
         Возвращает:
@@ -51,90 +118,60 @@ class EOSFlash(Flash):
                 - K_il (ndarray): Коэффициенты распределения для жидкой фазы.
                 - Sv (float): Коэффициент нормы для газовой фазы.
                 - Sl (float): Коэффициент нормы для жидкой фазы.
-
-        Описание:
-            - Алгоритм проверяет термодинамическую стабильность газовой и жидкой фаз.
-            - Для газовой фазы проводится итерационная проверка на основе коэффициентов распределения K_i.
-            - Аналогично для жидкой фазы определяется стабильность.
-            - Условия стабилизации фаз определяются по суммам квадратичных отклонений (Ri) и 
-            функции стабильности (TS).
-
-        Примечания:
-            - Максимальное число итераций задаётся параметром `_MaxIterationStable`.
-            - Логгируются промежуточные результаты каждой итерации для отслеживания процесса.
-            - Итерации прекращаются, если суммарное отклонение Ri падает ниже заданного порога 
-            или достигается условие стабилизации (TS < 1e-4).
         """
-        logger.debug("Начало проверки стабильности газовой фазы.")
-        m = 0
-        TS_v_flag = 0
-        # Проверка стабильности для газовой фазы
-        while m < self._MaxIterationStable:
-            Yi_v = self._z * K_i
-            Sv = np.sum(Yi_v)
-            self._y_i = Yi_v / Sv
+        logger.debug("Начало проверки стабильности.")
 
-            fw_i, Z_v = self._calculate_fugacity(self._p, self._t, self._y_i, *c_params, isMax=True)
-            Ri = fz_i / (Sv * fw_i)
-            Ri_v = np.sum((Ri - 1)**2)
+        def check_phase_stability(K_i, fz_i, phase):
+            m = 0
+            TS_flag = False
+            while m < self._MaxIterationStable:
+                Yi = self._z * K_i if phase == "gas" else self._z / K_i
+                S = np.sum(Yi)
+                y_i = Yi / S
 
-            logger.debug(f"Итерация стаб. газа {m}: Ri_v={Ri_v}")
-            if Ri_v < 1e-12:
-                break
+                f_i, Z = self._calculate_fugacity(
+                    self._p, self._t, y_i, *c_params, isMax=(phase == "gas")
+                )
+                Ri = fz_i / (S * f_i) if phase == "gas" else S * f_i / fz_i
+                Ri_sum = np.sum((Ri - 1) ** 2)
 
-            K_i *= Ri
-            TS_v = np.sum(np.log(K_i)**2)
-            if TS_v < 1e-4:
-                TS_v_flag = 1
-                break
-            m += 1
+                logger.debug(f"Итерация стаб. {phase} {m}: Ri_sum={Ri_sum}")
+                if Ri_sum < 1e-12:
+                    break
 
-        K_iv = K_i.copy()
+                K_i *= Ri
+                TS = np.sum(np.log(K_i) ** 2)
+                if TS < 1e-4:
+                    TS_flag = True
+                    break
+                m += 1
 
-        logger.debug("Проверка стабильности жидкой фазы.")
-        # Проверка стабильности для жидкой фазы
-        K_i = self._initial_guess_K()
-        fz_i, Z_v = self._calculate_fugacity(self._p, self._t, self._z, *c_params, isMax=True)
+            return K_i, S, TS_flag
 
-        ml = 0
-        TS_l_flag = 0
-        while ml < self._MaxIterationStable:
-            Yi_l = self._z / K_i
-            Sl = np.sum(Yi_l)
-            self._x_i = Yi_l / Sl
+        # Проверка стабильности газовой фазы
+        K_iv, Sv, TS_v_flag = check_phase_stability(K_i, fz_i, phase="gas")
 
-            fl_i, Z_l = self._calculate_fugacity(self._p, self._t, self._x_i, *c_params, isMax=False)
-            Ri = Sl * fl_i / fz_i
-            Ri_l = np.sum((Ri - 1)**2)
-            logger.debug(f"Итерация стаб. жидкости {ml}: Ri_l={Ri_l}")
+        # Проверка стабильности жидкой фазы
+        K_il, Sl, TS_l_flag = check_phase_stability(
+            self._initial_guess_K(), fz_i, phase="liquid"
+        )
 
-            if Ri_l < 1e-12:
-                break
+        # Определение общей стабильности
+        Stable = (
+            (TS_l_flag and TS_v_flag)
+            or (Sv <= 1 and TS_l_flag)
+            or (Sl <= 1 and TS_v_flag)
+            or (Sv < 1 and Sl <= 1)
+        )
+        TestPTF = Stable
 
-            K_i *= Ri
-            TS = np.sum(np.log(K_i)**2)
-            if TS < 1e-4:
-                TS_l_flag = 1
-                break
-            ml += 1
-
-        K_il = K_i.copy()
-
-        # Определение общей стабильности:
-        Sv = np.sum(self._y_i)
-        Sl = np.sum(self._x_i)
-        if ((TS_l_flag == 1 and TS_v_flag == 1)
-            or (Sv <= 1 and TS_l_flag == 1)
-            or (Sl <= 1 and TS_v_flag == 1)
-            or (Sv < 1 and Sl <= 1)):
-            Stable = True
-            TestPTF = True
-        else:
-            Stable = False
-            TestPTF = False
+        logger.debug(
+            f"TS_l_flag={TS_l_flag}, TS_v_flag={TS_v_flag}, Sv={Sv}, Sl={Sl}, Stable={Stable}"
+        )
 
         return Stable, TestPTF, K_iv, K_il, Sv, Sl
 
+    @log_function
     def _initial_guess_K(self):
         """
         Возвращает начальные оценки K-факторов.
@@ -142,9 +179,11 @@ class EOSFlash(Flash):
         """
         return (
             np.exp(5.373 * (1 + self._w) * (1 - self._Tkr / self._t))
-            * self._Pkr / self._p
-        )**1.0
+            * self._Pkr
+            / self._p
+        ) ** 1.0
 
+    @log_function
     def _perform_flash(self, Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params):
         """
         Выполняет Flash-расчёт для определения фазового равновесия системы.
@@ -172,33 +211,79 @@ class EOSFlash(Flash):
             - Если система стабильна, выбирается фаза на основе текущего состояния (одна или двухфазная система).
 
         Алгоритм:
-            - Итерации продолжаются до тех пор, пока максимальное отклонение (eps_f) не станет меньше 1e-5 
+            - Итерации продолжаются до тех пор, пока максимальное отклонение (eps_f) не станет меньше 1e-5
             или не достигнуто максимальное число итераций (`_MaxIterationFlash`).
             - В случае стабильной системы производится выбор фазового состояния с использованием метода `_choose_phase_if_stable`.
 
         Логирование:
             - В процессе итераций Flash логируются значения отклонений (eps_f), коэффициентов распределения и доли газа (W).
         """
-        if not Stable or TestPTF:
-            logger.debug("Система нестабильна или TestPTF=True, выполняем Flash-расчет.")
+        if not Stable:
+            logger.debug(
+                f"Система нестабильна (Stable = {Stable}) или TestPTF=True (TestPTF = {TestPTF})"
+            )
 
             K_i = self._choose_best_K(K_iv, K_il)
+            logger.debug(f"K_i = {K_i}")
             m = 0
             eps_f = 1
             # Итерации Flash
+            iteration_count = 0
             while eps_f > 1e-5 and m < self._MaxIterationFlash:
+                logger.debug(f"iteration_count = {iteration_count}")
                 W = self._findroot(K_i)
+                # Расчет молярных долей жидкой фазы
                 self._x_i = self._z / (1 + W * (K_i - 1))
-                self._y_i = K_i * self._x_i
+                logger.debug(
+                    f"Рассчитанные молярные доли жидкой фазы (до нормализации): {self._x_i}"
+                )
 
-                fw_i, Z_v = self._calculate_fugacity(self._p, self._t, self._y_i, *c_params, isMax=True)
-                fl_i, Z_l = self._calculate_fugacity(self._p, self._t, self._x_i, *c_params, isMax=False)
+                # Нормализация молярных долей жидкой фазы к единице
+                sum_x = np.sum(self._x_i)
+                if sum_x == 0:
+                    logger.error(
+                        "Сумма молярных долей жидкой фазы равна нулю. Невозможно нормализовать."
+                    )
+                    raise ZeroDivisionError(
+                        "Сумма молярных долей жидкой фазы равна нулю."
+                    )
+                self._x_i = self._x_i / sum_x
+                logger.debug(
+                    f"Молярные доли жидкой фазы после нормализации: {self._x_i}"
+                )
+
+                # Расчет молярных долей газовой фазы
+                self._y_i = K_i * self._x_i
+                # Нормализация молярных долей газовой фазы к единице
+                sum_y = np.sum(self._y_i)
+                if sum_y == 0:
+                    logger.error(
+                        "Сумма молярных долей газовой фазы равна нулю. Невозможно нормализовать."
+                    )
+                    raise ZeroDivisionError(
+                        "Сумма молярных долей газовой фазы равна нулю."
+                    )
+                self._y_i = self._y_i / sum_y
+                logger.debug(
+                    f"Молярные доли газовой фазы после нормализации: {self._y_i}"
+                )
+
+                logger.debug(f"W = {W}")
+                logger.debug(f"self._x_i = {sum(self._x_i)}")
+                logger.debug(f"self._y_i = {sum(self._y_i)}")
+                fw_i, Z_v = self._calculate_fugacity(
+                    self._p, self._t, self._y_i, *c_params, isMax=True
+                )
+                fl_i, Z_l = self._calculate_fugacity(
+                    self._p, self._t, self._x_i, *c_params, isMax=False
+                )
 
                 Rr = fl_i / fw_i
                 K_i *= Rr
                 eps_f = np.max(np.abs(Rr - 1))
                 logger.debug(f"Итерация Flash {m}: eps_f={eps_f}, W={W}")
                 m += 1
+                iteration_count += 1
 
             return W, Z_v, Z_l, False
         else:
@@ -207,6 +292,7 @@ class EOSFlash(Flash):
             W, Z_v, Z_l = self._choose_phase_if_stable()
             return W, Z_v, Z_l, True
 
+    @log_function
     def _choose_best_K(self, K_iv, K_il):
         """
         Выбирает лучшие коэффициенты распределения (K-факторы) для старта Flash-расчёта.
@@ -223,13 +309,14 @@ class EOSFlash(Flash):
             - Если отклонение для жидкой фазы (Kst_l) больше, выбираются K_il, иначе K_iv.
             - Используется для оптимального выбора начальных условий в зависимости от фазовой стабильности.
         """
-        Kst_v = np.sum((K_iv - 1)**2)
-        Kst_l = np.sum((K_il - 1)**2)
+        Kst_v = np.sum((K_iv - 1) ** 2)
+        Kst_l = np.sum((K_il - 1) ** 2)
         return K_il if Kst_l > Kst_v else K_iv
 
+    @log_function
     def _choose_phase_if_stable(self):
         """
-        Определяет фазу системы, если она признана стабильной, 
+        Определяет фазу системы, если она признана стабильной,
         на основе объёма и температуры.
 
         Возвращает:
@@ -267,7 +354,10 @@ class EOSFlash(Flash):
                 Z_l = self._Z_init
         return W, Z_v, Z_l
 
-    def _calculate_thermo_properties(self, W, Z_v, Z_l, a_i, BIPs, psi_i, ac_i, b_i, cpen):
+    @log_function
+    def _calculate_thermo_properties(
+        self, W, Z_v, Z_l, a_i, BIPs, psi_i, ac_i, b_i, cpen
+    ):
         """
         Расчёт термодинамических свойств: энтальпии, теплоёмкостей (Cp, Cv), объёма и плотности.
 
@@ -284,8 +374,32 @@ class EOSFlash(Flash):
             - Метод в текущем виде может работать некорректно, требуется дополнительная проверка и доработка.
         """
         constants = "1"  # Или другой режим по необходимости
-        enthalpy_w, Cp_w, Cv_w = self._calculate_enthalpy(self._p, self._t, self._y_i, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z_v, constants)
-        enthalpy_l, Cp_l, Cv_l = self._calculate_enthalpy(self._p, self._t, self._x_i, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z_l, constants)
+        enthalpy_w, Cp_w, Cv_w = self._calculate_enthalpy(
+            self._p,
+            self._t,
+            self._y_i,
+            a_i,
+            BIPs,
+            psi_i,
+            ac_i,
+            b_i,
+            cpen,
+            Z_v,
+            constants,
+        )
+        enthalpy_l, Cp_l, Cv_l = self._calculate_enthalpy(
+            self._p,
+            self._t,
+            self._x_i,
+            a_i,
+            BIPs,
+            psi_i,
+            ac_i,
+            b_i,
+            cpen,
+            Z_l,
+            constants,
+        )
 
         if W == 1:
             enthalpy = enthalpy_w
@@ -307,12 +421,34 @@ class EOSFlash(Flash):
         volume = VolumeMy_y * W + VolumeMy_x * (1 - W)
         self._Volume = volume
 
-        density_y = np.sum((self._mass * self._y_i) / VolumeMy_y) if VolumeMy_y != 0 else 0
-        density_x = np.sum((self._mass * self._x_i) / VolumeMy_x) if VolumeMy_x != 0 else 0
-        density = np.sum((self._mass * self._z) / self._Volume) if self._Volume != 0 else 0
+        density_y = (
+            np.sum((self._mass * self._y_i) / VolumeMy_y) if VolumeMy_y != 0 else 0
+        )
+        density_x = (
+            np.sum((self._mass * self._x_i) / VolumeMy_x) if VolumeMy_x != 0 else 0
+        )
+        density = (
+            np.sum((self._mass * self._z) / self._Volume) if self._Volume != 0 else 0
+        )
         self._density = density
 
-        return enthalpy, enthalpy_w, enthalpy_l, Cp, Cp_w, Cp_l, Cv, Cv_w, Cv_l, volume, VolumeMy_y, VolumeMy_x, density, density_y, density_x
+        return (
+            enthalpy,
+            enthalpy_w,
+            enthalpy_l,
+            Cp,
+            Cp_w,
+            Cp_l,
+            Cv,
+            Cv_w,
+            Cv_l,
+            volume,
+            VolumeMy_y,
+            VolumeMy_x,
+            density,
+            density_y,
+            density_x,
+        )
 
     @abc.abstractmethod
     def _calculate_enthalpy(
@@ -321,7 +457,7 @@ class EOSFlash(Flash):
         """
         Расчет энтальпии, Cp, Cv (есть во всех EOS),
         но если вы хотите, можете тоже сделать в базовом и переопределять только при необходимости.
-        Предположим, что в данном примере общая логика одинаковая, 
+        Предположим, что в данном примере общая логика одинаковая,
         тогда вынести в базовый класс.
         """
         pass
@@ -337,30 +473,55 @@ class EOSFlash(Flash):
         - Этап 6: Формирование результата
         """
 
-        logger.info("Начало флэш-расчёта EOSFlash.")
+        logger.info("ЭТАП 0 Начало флэш-расчёта EOSFlash.\n")
 
         # Этап 1: Инициализировать параметры EOS
-        a_i, b_i, BIPs, psi_i, ac_i, c_params = self._init_eos_parameters()
-        logger.debug("Параметры EOS инициализированы.")
+        a_i, b_i, c_i, BIPs, psi_i, ac_i, c_params = self._init_eos_parameters()
+        logger.debug("ЭТАП 1 Параметры EOS инициализированы.\n")
 
         # Этап 2: Предварительный расчёт фугактивности для исходной смеси z
         K_i = self._initial_guess_K()
-        fz_i, self._Z_init = self._calculate_fugacity(self._p, self._t, self._z, *c_params, isMax=True)
-        logger.debug("Предварительная фугактивность рассчитана.")
+        fz_i, self._Z_init = self._calculate_fugacity(
+            self._p, self._t, self._z, *c_params, isMax=True
+        )
+        logger.debug("ЭТАП 2 Предварительная фугактивность рассчитана.\n")
 
         # Этап 3: Проверка стабильности
-        Stable, TestPTF, K_iv, K_il, Sv, Sl = self._perform_stability_check(fz_i, self._Z_init, K_i, b_i, c_params)
-        logger.debug(f"Стабильность: Stable={Stable}, TestPTF={TestPTF}")
+        Stable, TestPTF, K_iv, K_il, Sv, Sl = self._perform_stability_check(
+            fz_i, self._Z_init, K_i, b_i, c_params
+        )
+        logger.debug(f"ЭТАП 3 Стабильность: Stable={Stable}, TestPTF={TestPTF}\n")
 
         # Этап 4: Выполнение Flash-расчёта при необходимости
-        W, Z_v, Z_l, stable_after_flash = self._perform_flash(Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params)
-        logger.debug(f"Flash расчёт завершён. W={W}, Z_v={Z_v}, Z_l={Z_l}")
+        W, Z_v, Z_l, stable_after_flash = self._perform_flash(
+            Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params
+        )
+        logger.debug(f"ЭТАП 4 Flash расчёт завершён. W={W}, Z_v={Z_v}, Z_l={Z_l}\n")
 
         # Этап 5: Расчет энтальпии, объёма, плотности и других свойств
-        (enthalpy, enthalpy_w, enthalpy_l, Cp, Cp_w, Cp_l, Cv, Cv_w, Cv_l,
-         volume, VolumeMy_y, VolumeMy_x, density, density_y, density_x) = self._calculate_thermo_properties(W, Z_v, Z_l, a_i, BIPs, psi_i, ac_i, b_i, self._cpen)
+        logger.info("\n=== ЭТАП 5: Расчет термодинамических свойств ===")
+        (
+            enthalpy,
+            enthalpy_w,
+            enthalpy_l,
+            Cp,
+            Cp_w,
+            Cp_l,
+            Cv,
+            Cv_w,
+            Cv_l,
+            volume,
+            VolumeMy_y,
+            VolumeMy_x,
+            density,
+            density_y,
+            density_x,
+        ) = self._calculate_thermo_properties(
+            W, Z_v, Z_l, a_i, BIPs, psi_i, ac_i, b_i, self._cpen
+        )
 
         # Этап 6: Формирование результата
+        logger.info("\n=== ЭТАП 6: Формирование итогового результата ===")
         result = equation_dto.EquationResultDTO(
             w=W,
             z_v=Z_v,

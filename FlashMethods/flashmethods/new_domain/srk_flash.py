@@ -1,5 +1,6 @@
 import numpy as np
-from new_domain.base_eos_flash import EOSFlash
+from base_eos_flash import EOSFlash
+
 
 class SRKFlash(EOSFlash):
     """
@@ -29,18 +30,23 @@ class SRKFlash(EOSFlash):
         # Константы уравнения SRK
         ac_i = 0.42748 * self._R**2 * self._Tkr**2 / self._Pkr  # Базовый коэффициент
         psi_i = 0.48 + 1.574 * self._w - 0.176 * self._w**2  # Коэффициент асимметрии
-        alpha_i = (1 + psi_i * (1 - np.sqrt(self._t / self._Tkr)))**2  # Температурная поправка
+        alpha_i = (
+            1 + psi_i * (1 - np.sqrt(self._t / self._Tkr))
+        ) ** 2  # Температурная поправка
         a_i = ac_i * alpha_i  # Коэффициент a_i уравнения состояния
-        b_i = 0.08664 * self._R * self._Tkr / self._Pkr  # Коэффициент b_i уравнения состояния
+        b_i = (
+            0.08664 * self._R * self._Tkr / self._Pkr
+        )  # Коэффициент b_i уравнения состояния
 
         # Матрица взаимодействий для параметров a
         BIPs = self._c
-        c_a_i = (1 - BIPs) * np.sqrt(a_i[:, None] * a_i[None, :])  # Взаимодействия компонентов
+        c_a_i = (1 - BIPs) * np.sqrt(
+            a_i[:, None] * a_i[None, :]
+        )  # Взаимодействия компонентов
 
         return a_i, b_i, BIPs, psi_i, ac_i, (b_i, c_a_i)
 
     def _calculate_fugacity(self, P, T, molar_frac, b_i, c_a_i, isMax=True):
-
         """
         Рассчитывает фугитивность компонента в смеси на основе уравнения состояния SRK (EOS).
         Параметры:
@@ -49,7 +55,7 @@ class SRKFlash(EOSFlash):
             molar_frac (ndarray): Мольные доли компонентов в смеси.
             b_i (ndarray): Параметры "b" для каждого компонента.
             c_a_i (ndarray): Кросс-параметры "a" для взаимодействия между компонентами.
-            isMax (bool): Флаг для выбора корня уравнения состояния. 
+            isMax (bool): Флаг для выбора корня уравнения состояния.
                         True - используется максимальный корень, False - минимальный.
         Возвращает:
             tuple:
@@ -68,7 +74,7 @@ class SRKFlash(EOSFlash):
         aw = np.sum(molar_frac[:, None] * molar_frac[None, :] * c_a_i)
         bw = np.dot(molar_frac, b_i)
         Aw = aw * P / (R**2 * T**2)  # Коэффициент Aw
-        Bw = bw * P / (R * T)        # Коэффициент Bw
+        Bw = bw * P / (R * T)  # Коэффициент Bw
 
         # Коэффициенты кубического уравнения SRK
         a = 1
@@ -99,4 +105,6 @@ class SRKFlash(EOSFlash):
         Вычисление энтальпии, Cp и Cv на основе стандартной логики SRK.
         Логика взята из базового класса EOSFlash.
         """
-        return super()._calculate_enthalpy(P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants)
+        return super()._calculate_enthalpy(
+            P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
+        )

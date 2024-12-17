@@ -1,8 +1,8 @@
 import abc
 
 import numpy as np
-from interfaces import base_equation
-from dtos import equation_dto, fluid_dto
+from flashmethods.interfaces import base_equation
+from flashmethods.dtos import equation_dto, fluid_dto
 
 
 class Flash(base_equation.Equation):
@@ -21,7 +21,9 @@ class Flash(base_equation.Equation):
         self._N = len(fluid.components)  # количество компонент N
         self._R = 0.00831472998267014  # универсальная газовая МПа*м3/(кмоль*К)
         self._MaxIterationStable = 30  # Максимальное количество итераций для проверки 1
-        self._MaxIterationFlash = 400  # Максимальное количество итераций для Flash-расчета
+        self._MaxIterationFlash = (
+            400  # Максимальное количество итераций для Flash-расчета
+        )
         self._component_name = np.empty(self._N, dtype="S10")
         self._z = np.zeros(self._N, dtype=np.float64)
         self._mass = np.zeros(self._N, dtype=np.float64)
@@ -67,8 +69,9 @@ class Flash(base_equation.Equation):
         self._T_pkr = np.dot(self._z, self._Tkr)
         self._Control_phase = self._V_pkr * self._T_pkr * self._T_pkr
 
-
-    def _findroot(self, k: np.ndarray, eps: float = 0.000001, max_iter: int = 1000) -> float:
+    def _findroot(
+        self, k: np.ndarray, eps: float = 0.000001, max_iter: int = 1000
+    ) -> float:
         """
         Численное нахождение корня методом бисекции.
 
@@ -103,7 +106,6 @@ class Flash(base_equation.Equation):
         # Вычисляем значение функции в точке a
         fa: float = float(np.sum(z_k / (1 + a * (k - 1))))
 
-
         # Счетчик итераций
         iter_count: int = 0
 
@@ -116,7 +118,6 @@ class Flash(base_equation.Equation):
 
             # Значение функции в точке x
             fx: float = float(np.sum(z_k / (1 + x * (k - 1))))
-
 
             # Если функция меняет знак между a и x, корень лежит в этом интервале.
             # Перемещаем верхнюю границу b в точку x.
@@ -139,7 +140,6 @@ class Flash(base_equation.Equation):
         # Возвращаем среднюю точку интервала, как найденный корень
         return (a + b) / 2
 
-
     def _solve_cubic(self, a, b, c, d) -> float:
         """
         Решает кубическое уравнение вида ax^3 + bx^2 + cx + d = 0.
@@ -152,7 +152,7 @@ class Flash(base_equation.Equation):
 
         Возвращает:
             np.array: Массив из одного или нескольких действительных корней уравнения.
-        
+
         Описание:
             - Используется метод Кардано для решения кубического уравнения.
             - В зависимости от дискриминанта (D), функция возвращает один корень или три действительных корня.
