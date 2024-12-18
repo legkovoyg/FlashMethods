@@ -9,6 +9,9 @@ import os
 from pathlib import Path
 
 from flashmethods.new_domain.srk_peneloux_flash import SRKPenelouxFlash
+from flashmethods.new_domain.pr_flash import PRFlash
+from flashmethods.new_domain.srk_flash import SRKFlash
+
 
 # === Настройка Логирования ===
 logging.basicConfig(level=logging.INFO)
@@ -569,7 +572,7 @@ if __name__ == "__main__":
     project_root, mixtures_path, data_path = get_project_paths()
 
     # Формируем полный путь к CHC-файлу
-    chc_file_path = mixtures_path / "FLASHtest1.CHC"
+    chc_file_path = mixtures_path / "FLASHtest4.CHC"
 
     # Проверяем существование файла CHC
     if not chc_file_path.exists():
@@ -582,20 +585,25 @@ if __name__ == "__main__":
     pvtsim_srk_parser = PVTSimParserSRK()
     processor_srk = FluidDataProcessor(parser=pvtsim_srk_parser)
 
-    try:
-        # Процессинг данных из CHC
-        fluid_srk = processor_srk.process(file_path=str(chc_file_path), p=1, t=233.15)
+    # try:
+    # Процессинг данных из CHC
+    fluid_srk = processor_srk.process(file_path=str(chc_file_path), p=21, t=382.15)
+    print(fluid_srk.components)
+    # Передаем DTO в расчетный метод
+    calculated_PR = PRFlash(fluid_srk)
+    pr = calculated_PR.calculate()
 
-        # Передаем DTO в расчетный метод
-        calculated_SRK_Peneloux_srk = SRKPenelouxFlash(fluid_srk)
-        srk_peneloux_srk = calculated_SRK_Peneloux_srk.calculate()
+    calculated_SRK = SRKFlash(fluid_srk)
+    srk = calculated_SRK.calculate()
 
-        print("\nРезультаты из CHC данных (SRK):")
-        print(f"W (качество смеси): {srk_peneloux_srk.w}")
-        print(f"Z_v (коэф. сжимаемости газа): {srk_peneloux_srk.z_v}")
-        print(f"Z_l (коэф. сжимаемости жидкости): {srk_peneloux_srk.z_l}")
+    calculated_SRK_Peneloux = SRKPenelouxFlash(fluid_srk)
+    srk_peneloux_srk = calculated_SRK_Peneloux.calculate()
 
-    except ValueError as ve:
-        logger.error(f"Ошибка при обработке CHC данных (SRK): {ve}")
+    print(f"W (SRK_Peneloux): {srk_peneloux_srk}\n")
+    print(f"W (PR): {pr}\n")
+    print(f"W (SRK): {srk}\n")
+
+    # except ValueError as ve:
+    #     logger.error(f"Ошибка при обработке CHC данных (SRK): {ve}")
     # except Exception as e:
     #     logger.error(f"Неожиданная ошибка: {e}")

@@ -1,66 +1,8 @@
 import abc
-import logging
-import functools
 import numpy as np
 from flashmethods.dtos import equation_dto
 from flashmethods.new_domain.base_flash import Flash
-
-
-logger = logging.getLogger(__name__)
-# Настройка логгера
-logging.basicConfig(level=logging.DEBUG, format="%(message)s")
-
-
 import functools
-import inspect
-import os
-
-
-def truncate_array(arr):
-    if isinstance(arr, np.ndarray):
-        if arr.size > 10:
-            return f"{arr[:5].tolist()}, ..., {arr[-5:].tolist()}"
-    return arr
-
-
-def log_function(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        # Получаем информацию о файле
-        file_path = inspect.getfile(func)
-        file_name = os.path.basename(file_path)
-
-        # Начало
-        logger.info(f"\n{'='*50}")
-        logger.info(f"Файл: {file_name}")
-        logger.info(f"Функция: {func.__name__}")
-        logger.info(f"Начало выполнения")
-
-        # Входные данные
-        if len(args) > 1:  # Пропускаем self
-            truncated_args = tuple(truncate_array(arg) for arg in args[1:])
-            # logger.info(f"Входные позиционные аргументы: {truncated_args}")
-
-        if kwargs:
-            truncated_kwargs = {k: truncate_array(v) for k, v in kwargs.items()}
-            # logger.info(f"Входные именованные аргументы: {truncated_kwargs}")
-
-        try:
-            # Выполнение функции
-            result = func(*args, **kwargs)
-
-            # Выходные данные
-            truncated_result = truncate_array(result)
-            # logger.info(f"Выходные данные: {truncated_result}")
-        except Exception as e:
-            logger.exception(f"Неожиданная ошибка: {str(e)}")
-            raise
-        finally:
-            logger.info(f"{'='*50}")
-
-        return result
-
-    return wrapper
 
 
 class EOSFlash(Flash):
@@ -96,7 +38,6 @@ class EOSFlash(Flash):
         """
         pass
 
-    @log_function
     def _perform_stability_check(self, fz_i, Z_init, K_i, b_i, c_params):
         """
         Выполняет проверку термодинамической стабильности газовой и жидкой фаз
@@ -119,7 +60,7 @@ class EOSFlash(Flash):
                 - Sv (float): Коэффициент нормы для газовой фазы.
                 - Sl (float): Коэффициент нормы для жидкой фазы.
         """
-        logger.debug("Начало проверки стабильности.")
+        # logger.debug("Начало проверки стабильности.")
 
         def check_phase_stability(K_i, fz_i, phase):
             m = 0
@@ -128,14 +69,12 @@ class EOSFlash(Flash):
                 Yi = self._z * K_i if phase == "gas" else self._z / K_i
                 S = np.sum(Yi)
                 y_i = Yi / S
-
                 f_i, Z = self._calculate_fugacity(
                     self._p, self._t, y_i, *c_params, isMax=(phase == "gas")
                 )
                 Ri = fz_i / (S * f_i) if phase == "gas" else S * f_i / fz_i
                 Ri_sum = np.sum((Ri - 1) ** 2)
-
-                logger.debug(f"Итерация стаб. {phase} {m}: Ri_sum={Ri_sum}")
+                # logger.debug(f"Итерация стаб. {phase} {m}: Ri_sum={Ri_sum}")
                 if Ri_sum < 1e-12:
                     break
 
@@ -165,13 +104,12 @@ class EOSFlash(Flash):
         )
         TestPTF = Stable
 
-        logger.debug(
-            f"TS_l_flag={TS_l_flag}, TS_v_flag={TS_v_flag}, Sv={Sv}, Sl={Sl}, Stable={Stable}"
-        )
+        # logger.debug(
+        #     f"TS_l_flag={TS_l_flag}, TS_v_flag={TS_v_flag}, Sv={Sv}, Sl={Sl}, Stable={Stable}"
+        # )
 
         return Stable, TestPTF, K_iv, K_il, Sv, Sl
 
-    @log_function
     def _initial_guess_K(self):
         """
         Возвращает начальные оценки K-факторов.
@@ -183,7 +121,6 @@ class EOSFlash(Flash):
             / self._p
         ) ** 1.0
 
-    @log_function
     def _perform_flash(self, Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params):
         """
         Выполняет Flash-расчёт для определения фазового равновесия системы.
@@ -219,24 +156,24 @@ class EOSFlash(Flash):
             - В процессе итераций Flash логируются значения отклонений (eps_f), коэффициентов распределения и доли газа (W).
         """
         if not Stable:
-            logger.debug(
-                f"Система нестабильна (Stable = {Stable}) или TestPTF=True (TestPTF = {TestPTF})"
-            )
+            # logger.debug(
+            #     f"Система нестабильна (Stable = {Stable}) или TestPTF=True (TestPTF = {TestPTF})"
+            # )
 
             K_i = self._choose_best_K(K_iv, K_il)
-            logger.debug(f"K_i = {K_i}")
+            # logger.debug(f"K_i = {K_i}")
             m = 0
             eps_f = 1
             # Итерации Flash
             iteration_count = 0
             while eps_f > 1e-5 and m < self._MaxIterationFlash:
-                logger.debug(f"iteration_count = {iteration_count}")
+                # logger.debug(f"iteration_count = {iteration_count}")
                 W = self._findroot(K_i)
                 # Расчет молярных долей жидкой фазы
                 self._x_i = self._z / (1 + W * (K_i - 1))
-                logger.debug(
-                    f"Рассчитанные молярные доли жидкой фазы (до нормализации): {self._x_i}"
-                )
+                # logger.debug(
+                #     f"Рассчитанные молярные доли жидкой фазы (до нормализации): {self._x_i}"
+                # )
 
                 # Нормализация молярных долей жидкой фазы к единице
                 sum_x = np.sum(self._x_i)
@@ -248,9 +185,9 @@ class EOSFlash(Flash):
                         "Сумма молярных долей жидкой фазы равна нулю."
                     )
                 self._x_i = self._x_i / sum_x
-                logger.debug(
-                    f"Молярные доли жидкой фазы после нормализации: {self._x_i}"
-                )
+                # logger.debug(
+                #     f"Молярные доли жидкой фазы после нормализации: {self._x_i}"
+                # )
 
                 # Расчет молярных долей газовой фазы
                 self._y_i = K_i * self._x_i
@@ -264,13 +201,13 @@ class EOSFlash(Flash):
                         "Сумма молярных долей газовой фазы равна нулю."
                     )
                 self._y_i = self._y_i / sum_y
-                logger.debug(
-                    f"Молярные доли газовой фазы после нормализации: {self._y_i}"
-                )
+                # logger.debug(
+                #     f"Молярные доли газовой фазы после нормализации: {self._y_i}"
+                # )
 
-                logger.debug(f"W = {W}")
-                logger.debug(f"self._x_i = {sum(self._x_i)}")
-                logger.debug(f"self._y_i = {sum(self._y_i)}")
+                # logger.debug(f"W = {W}")
+                # logger.debug(f"self._x_i = {sum(self._x_i)}")
+                # logger.debug(f"self._y_i = {sum(self._y_i)}")
                 fw_i, Z_v = self._calculate_fugacity(
                     self._p, self._t, self._y_i, *c_params, isMax=True
                 )
@@ -281,7 +218,7 @@ class EOSFlash(Flash):
                 Rr = fl_i / fw_i
                 K_i *= Rr
                 eps_f = np.max(np.abs(Rr - 1))
-                logger.debug(f"Итерация Flash {m}: eps_f={eps_f}, W={W}")
+                # logger.debug(f"Итерация Flash {m}: eps_f={eps_f}, W={W}")
                 m += 1
                 iteration_count += 1
 
@@ -292,7 +229,6 @@ class EOSFlash(Flash):
             W, Z_v, Z_l = self._choose_phase_if_stable()
             return W, Z_v, Z_l, True
 
-    @log_function
     def _choose_best_K(self, K_iv, K_il):
         """
         Выбирает лучшие коэффициенты распределения (K-факторы) для старта Flash-расчёта.
@@ -313,7 +249,6 @@ class EOSFlash(Flash):
         Kst_l = np.sum((K_il - 1) ** 2)
         return K_il if Kst_l > Kst_v else K_iv
 
-    @log_function
     def _choose_phase_if_stable(self):
         """
         Определяет фазу системы, если она признана стабильной,
@@ -354,7 +289,6 @@ class EOSFlash(Flash):
                 Z_l = self._Z_init
         return W, Z_v, Z_l
 
-    @log_function
     def _calculate_thermo_properties(
         self, W, Z_v, Z_l, a_i, BIPs, psi_i, ac_i, b_i, cpen
     ):
@@ -473,33 +407,26 @@ class EOSFlash(Flash):
         - Этап 6: Формирование результата
         """
 
-        logger.info("ЭТАП 0 Начало флэш-расчёта EOSFlash.\n")
-
         # Этап 1: Инициализировать параметры EOS
         a_i, b_i, c_i, BIPs, psi_i, ac_i, c_params = self._init_eos_parameters()
-        logger.debug("ЭТАП 1 Параметры EOS инициализированы.\n")
 
         # Этап 2: Предварительный расчёт фугактивности для исходной смеси z
         K_i = self._initial_guess_K()
         fz_i, self._Z_init = self._calculate_fugacity(
             self._p, self._t, self._z, *c_params, isMax=True
         )
-        logger.debug("ЭТАП 2 Предварительная фугактивность рассчитана.\n")
 
         # Этап 3: Проверка стабильности
         Stable, TestPTF, K_iv, K_il, Sv, Sl = self._perform_stability_check(
             fz_i, self._Z_init, K_i, b_i, c_params
         )
-        logger.debug(f"ЭТАП 3 Стабильность: Stable={Stable}, TestPTF={TestPTF}\n")
 
         # Этап 4: Выполнение Flash-расчёта при необходимости
         W, Z_v, Z_l, stable_after_flash = self._perform_flash(
             Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params
         )
-        logger.debug(f"ЭТАП 4 Flash расчёт завершён. W={W}, Z_v={Z_v}, Z_l={Z_l}\n")
 
         # Этап 5: Расчет энтальпии, объёма, плотности и других свойств
-        logger.info("\n=== ЭТАП 5: Расчет термодинамических свойств ===")
         (
             enthalpy,
             enthalpy_w,
@@ -521,7 +448,6 @@ class EOSFlash(Flash):
         )
 
         # Этап 6: Формирование результата
-        logger.info("\n=== ЭТАП 6: Формирование итогового результата ===")
         result = equation_dto.EquationResultDTO(
             w=W,
             z_v=Z_v,
@@ -547,5 +473,4 @@ class EOSFlash(Flash):
             density_x=density_x,
         )
 
-        logger.info("Флэш-расчёт завершён успешно.")
         return result

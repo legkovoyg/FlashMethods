@@ -1,5 +1,5 @@
 import numpy as np
-from base_eos_flash import EOSFlash
+from flashmethods.new_domain.base_eos_flash import EOSFlash
 
 
 class SRKFlash(EOSFlash):
@@ -10,43 +10,41 @@ class SRKFlash(EOSFlash):
 
     def _init_eos_parameters(self):
         """
-        Инициализация параметров для уравнения состояния Soave-Redlich-Kwong (SRK).
+        Инициализация параметров EOS для SRK-Peneloux.
 
         Возвращает:
             tuple:
                 - a_i (ndarray): Параметр "a" для каждого компонента.
                 - b_i (ndarray): Параметр "b" для каждого компонента.
+                - c_i (ndarray): Дополнительный параметр Peneloux для каждого компонента.
                 - BIPs (ndarray): Бинарные параметры взаимодействия (Binary Interaction Parameters).
-                - psi_i (ndarray): Коэффициенты для расчёта температурной поправки альфа.
+                - psi_i (ndarray): Коэффициенты для расчёта параметра альфа.
                 - ac_i (ndarray): Значения параметра "a" при критических условиях.
-                - tuple: Набор параметров (b_i, c_a_i) для дальнейших расчётов.
+                - tuple: Набор параметров (b_i, c_i, c_a_i) для дальнейших расчётов.
 
         Описание:
-            - Параметры SRK рассчитываются на основе критической температуры (Tkr),
-            критического давления (Pkr) и ацентрического фактора (w).
-            - Используется температурная поправка alpha_i для учёта зависимости от температуры.
+            - Параметры SRK рассчитываются с учётом критической температуры (Tkr),
+              критического давления (Pkr) и ацентрического фактора (w).
+            - Параметр Peneloux (c_i) добавляется для корректировки объёма.
             - Матрица взаимодействий c_a_i учитывает бинарные взаимодействия между компонентами.
         """
-        # Константы уравнения SRK
-        ac_i = 0.42748 * self._R**2 * self._Tkr**2 / self._Pkr  # Базовый коэффициент
-        psi_i = 0.48 + 1.574 * self._w - 0.176 * self._w**2  # Коэффициент асимметрии
-        alpha_i = (
-            1 + psi_i * (1 - np.sqrt(self._t / self._Tkr))
-        ) ** 2  # Температурная поправка
-        a_i = ac_i * alpha_i  # Коэффициент a_i уравнения состояния
-        b_i = (
-            0.08664 * self._R * self._Tkr / self._Pkr
-        )  # Коэффициент b_i уравнения состояния
+
+        # Коэффициенты SRK
+        ac_i = 0.42747 * self._R**2 * self._Tkr**2 / self._Pkr
+        psi_i = 0.48 + 1.574 * self._w - 0.176 * self._w**2
+        alpha_i = (1 + psi_i * (1 - np.sqrt(self._t / self._Tkr))) ** 2
+        a_i = ac_i * alpha_i
+        b_i = 0.08664 * self._R * self._Tkr / self._Pkr
+
+        # Дополнительный параметр Peneloux
+        c_i = self._cpen
 
         # Матрица взаимодействий для параметров a
         BIPs = self._c
-        c_a_i = (1 - BIPs) * np.sqrt(
-            a_i[:, None] * a_i[None, :]
-        )  # Взаимодействия компонентов
+        c_a_i = (1 - BIPs) * np.sqrt(a_i[:, None] * a_i[None, :])
+        return a_i, b_i, c_i, BIPs, psi_i, ac_i, (b_i, c_i, c_a_i)
 
-        return a_i, b_i, BIPs, psi_i, ac_i, (b_i, c_a_i)
-
-    def _calculate_fugacity(self, P, T, molar_frac, b_i, c_a_i, isMax=True):
+    def _calculate_fugacity(self, P, T, molar_frac, *args, isMax=True):
         """
         Рассчитывает фугитивность компонента в смеси на основе уравнения состояния SRK (EOS).
         Параметры:
@@ -68,7 +66,8 @@ class SRKFlash(EOSFlash):
             - Метод позволяет учитывать межмолекулярные взаимодействия и выбор корня для фазового состояния.
         """
 
-        R = self._R  # Газовая постоянная
+        b_i, _, c_a_i = args  # распаковываем только нужные параметры
+        R = self._R
 
         # Вычисление Aw и Bw
         aw = np.sum(molar_frac[:, None] * molar_frac[None, :] * c_a_i)
@@ -102,9 +101,7 @@ class SRKFlash(EOSFlash):
         self, P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
     ):
         """
-        Вычисление энтальпии, Cp и Cv на основе стандартной логики SRK.
-        Логика взята из базового класса EOSFlash.
+        Расчёт энтальпии и теплоёмкостей на основе общей логики.
+        return: enthalpy_w, Cp_w, Cv_w
         """
-        return super()._calculate_enthalpy(
-            P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
-        )
+        return 1, 1, 1

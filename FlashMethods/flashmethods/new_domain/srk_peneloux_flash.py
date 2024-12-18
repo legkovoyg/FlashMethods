@@ -1,7 +1,5 @@
 import numpy as np
-from flashmethods.new_domain.base_eos_flash import EOSFlash, log_function
-
-import logging
+from flashmethods.new_domain.base_eos_flash import EOSFlash
 
 
 class SRKPenelouxFlash(EOSFlash):
@@ -10,9 +8,6 @@ class SRKPenelouxFlash(EOSFlash):
     Реализует специфику SRK-Peneloux, включая дополнительный параметр c_i.
     """
 
-    logger = logging.getLogger(__name__)
-
-    @log_function
     def _init_eos_parameters(self):
         """
         Инициализация параметров EOS для SRK-Peneloux.
@@ -47,21 +42,16 @@ class SRKPenelouxFlash(EOSFlash):
         # Матрица взаимодействий для параметров a
         BIPs = self._c
         c_a_i = (1 - BIPs) * np.sqrt(a_i[:, None] * a_i[None, :])
-
         return a_i, b_i, c_i, BIPs, psi_i, ac_i, (b_i, c_i, c_a_i)
 
-    @log_function
     def _calculate_fugacity(self, P, T, molar_frac, b_i, c_i, c_a_i, isMax=True):
         """
         Рассчитывает фугитивности компонентов и коэффициент сжимаемости Z для уравнения состояния SRK-Peneloux.
         """
         R = self._R
-
         # Проверка корректности входных данных
         if np.any(molar_frac < 0) or not np.isclose(np.sum(molar_frac), 1.0, rtol=1e-3):
-            self.logger.error(
-                f"Некорректные мольные доли: {molar_frac}, сумма = {sum(molar_frac)}"
-            )
+            print(f"Некорректные мольные доли: {molar_frac}, сумма = {sum(molar_frac)}")
             return None, None
 
         # Вычисление Aw, Bw и Cw с защитой от некорректных значений
@@ -70,13 +60,12 @@ class SRKPenelouxFlash(EOSFlash):
             bw = np.dot(molar_frac, b_i)
             cw = np.dot(self._cpen, molar_frac)
 
-            if any(np.isnan([aw, bw, cw])):
-                logger.error("Получены nan значения при расчете параметров")
-                return None, None
-
             Aw = aw * P / (R**2 * T**2)
             Bw = bw * P / (R * T)
             Cw = cw * P / (R * T)
+
+            Biw = b_i * P / (R * T)
+            Ciw = c_i * P / (R * T)
 
             # Коэффициенты кубического уравнения
             a = 1
@@ -86,47 +75,31 @@ class SRKPenelouxFlash(EOSFlash):
 
             # Решение кубического уравнения
             roots = self._solve_cubic(a, b, c, d)
-            if len(roots) == 0:
-                logger.error("Не найдены корни кубического уравнения")
-                return None, None
 
             Z_v = np.max(roots) if isMax else np.min(roots)
 
             # Расчет фугактивности
             avvv = np.dot(molar_frac, c_a_i)
 
-            # Проверяем знак аргумента логарифма
-            log_term1 = molar_frac * P
-            log_term2 = Z_v + Cw - Bw
-            log_term3 = (Z_v + Bw + Cw) / (Z_v + Cw)
-
-            if np.any(log_term1 <= 0) or log_term2 <= 0 or log_term3 <= 0:
-                logger.error("Обнаружены отрицательные значения в аргументах логарифма")
-                return None, None
-
-            log_coeff = (
-                np.log(log_term1)
-                - np.log(log_term2)
-                + (b_i * P / (R * T) - c_i * P / (R * T)) / log_term2
-                - (Aw / Bw) * ((2 * avvv / aw) - (b_i / bw)) * np.log(log_term3)
-                - (Aw / Bw) * (b_i + c_i) / (Z_v + Bw + Cw)
-                + (Aw / Bw) * c_i / (Z_v + Cw)
+            log_fugacity = (
+                np.log(molar_frac * P)
+                - np.log(Z_v + Cw - Bw)
+                + (Biw - Ciw) / (Z_v + Cw - Bw)
+                - (Aw / Bw)
+                * ((2 * avvv / aw) - (b_i / bw))
+                * np.log((Z_v + Bw + Cw) / (Z_v + Cw))
+                - (Aw / Bw) * (Biw + Ciw) / (Z_v + Bw + Cw)
+                + (Aw / Bw) * Ciw / (Z_v + Cw)
             )
 
-            fz_i = np.exp(log_coeff)
-
-            # Проверка результатов
-            if np.any(np.isnan(fz_i)) or np.any(np.isinf(fz_i)):
-                logger.error("Получены некорректные значения фугактивности")
-                return None, None
+            fz_i = np.exp(log_fugacity)
 
             return fz_i, Z_v
 
         except Exception as e:
-            logger.error(f"Ошибка при расчете фугактивности: {str(e)}")
+            print(f"Ошибка при расчете фугактивности: {str(e)}")
             return None, None
 
-    @log_function
     def _calculate_enthalpy(
         self, P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
     ):

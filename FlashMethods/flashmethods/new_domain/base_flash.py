@@ -49,6 +49,7 @@ class Flash(base_equation.Equation):
         if fluid.BIPs is None:
             self._c = np.zeros((self._N, self._N), dtype=np.float64)
         else:
+            # self._c = np.zeros((self._N, self._N), dtype=np.float64)
             self._c = np.array(fluid.BIPs, dtype=np.float64)
 
         for i, component in enumerate(fluid.components):
