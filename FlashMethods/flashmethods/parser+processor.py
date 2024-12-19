@@ -1,21 +1,62 @@
 # === Импорты ===
 import pandas as pd
-from openpyxl import load_workbook
-from openpyxl.utils.exceptions import InvalidFileException
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict
 import re
 import numpy as np
 import logging
+import os
+from pathlib import Path
+
+from flashmethods.new_domain.srk_peneloux_flash import SRKPenelouxFlash
+from flashmethods.new_domain.pr_flash import PRFlash
+from flashmethods.new_domain.srk_flash import SRKFlash
+
 
 # === Настройка Логирования ===
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import sys
+from pathlib import Path
+
+# Добавляем корневую директорию проекта в PYTHONPATH
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
+
+
+# === Вспомогательная функция для определения путей ===
+def get_project_paths():
+    """
+    Определяет основные пути проекта.
+
+    Returns:
+        tuple: (project_root, mixtures_path, data_path)
+    """
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent
+    mixtures_path = project_root / "chcparser" / "mixtures"
+    data_path = project_root / "data"
+    mixtures_path.mkdir(parents=True, exist_ok=True)
+    data_path.mkdir(parents=True, exist_ok=True)
+    return project_root, mixtures_path, data_path
+
+
 # === DTO Классы ===
 class FluidComponentDTO:
-    def __init__(self, component_name: str, z: float, mass: float, Pkr: float, Tkr: float,
-                 Vkr: float, w: float, cpen: float, T_boil: float, density_liq_phase: float):
+    def __init__(
+        self,
+        component_name: str,
+        z: float,
+        mass: float,
+        Pkr: float,
+        Tkr: float,
+        Vkr: float,
+        w: float,
+        cpen: float,
+        T_boil: float,
+        density_liq_phase: float,
+    ):
         self.component_name = component_name
         self.z = z
         self.mass = mass
@@ -28,26 +69,26 @@ class FluidComponentDTO:
         self.density_liq_phase = density_liq_phase
 
     def __repr__(self):
-        return (f"FluidComponentDTO(component_name={self.component_name}, z={self.z}, mass={self.mass}, "
-                f"Pkr={self.Pkr}, Tkr={self.Tkr}, Vkr={self.Vkr}, w={self.w}, "
-                f"cpen={self.cpen}, T_boil={self.T_boil}, density_liq_phase={self.density_liq_phase})")
+        return (
+            f"FluidComponentDTO(component_name={self.component_name}, z={self.z}, mass={self.mass}, "
+            f"Pkr={self.Pkr}, Tkr={self.Tkr}, Vkr={self.Vkr}, w={self.w}, "
+            f"cpen={self.cpen}, T_boil={self.T_boil}, density_liq_phase={self.density_liq_phase})"
+        )
 
 
 class FluidDTO:
-    def __init__(self, components: List[FluidComponentDTO], BIPs: Optional[pd.DataFrame], p: float, t: float):
+    def __init__(
+        self,
+        components: List[FluidComponentDTO],
+        BIPs: Optional[pd.DataFrame],
+        p: float,
+        t: float,
+    ):
         self.components = components
         self.BIPs = BIPs
         self.p = p
         self.t = t
 
-# === Класс Flash ===
-class SRK_peneloux_Flash:
-    def __init__(self, fluid: FluidDTO):
-        self.fluid = fluid
-
-    def calculate(self):
-        # Простая демонстрация, в реальности здесь будет сложная логика расчета
-        return self.fluid.components
 
 # === Абстрактный парсер ===
 class Parser(ABC):
@@ -55,68 +96,117 @@ class Parser(ABC):
     def load_data(self, file_path: str) -> Optional[Dict]:
         pass
 
-# === Парсеры Excel ===
-class ExcelDataParser:
-    def load_data(self, file_path: str) -> Optional[Dict]:
-        try:
-            wb = load_workbook(file_path)
-            ws = wb.active
-            data = {}
-            # Итерация по колонкам
-            for col_idx, col in enumerate(ws.iter_cols(values_only=True), start=1):
-                header = ws.cell(row=1, column=col_idx).value
-                if header is not None:
-                    # Фильтрация данных, исключая None и заголовок
-                    col_data = [cell for cell in col[1:] if cell is not None]
-                    data[header] = col_data
-            logger.info(f"ExcelDataParser: успешно загружены данные из {file_path}")
-            return data
-        except InvalidFileException:
-            logger.error("ExcelDataParser: ошибка при открытии файла.")
-            return None
-        except Exception as e:
-            logger.error(f"ExcelDataParser: произошла ошибка - {e}")
+
+# === Вспомогательные парсеры для CHC ===
+
+
+class ComponentCountParser:
+    def __init__(self, content):
+        self.content = content
+
+    def parse(self) -> Optional[int]:
+        # Извлекаем количество компонентов из строки <Short Comp Name>
+        match = re.search(r"<Short Comp Name>\s*(\d+)\s+\d+", self.content)
+        if match:
+            component_count = int(match.group(1))
+            logger.debug(f"Извлечено количество компонентов: {component_count}")
+            return component_count
+        else:
+            logger.warning(
+                "Не удалось найти количество компонентов в теге <Short Comp Name>."
+            )
             return None
 
-class ExcelBIPSParser:
-    def load_data(self, file_path: str) -> Optional[pd.DataFrame]:
-        try:
-            BIPS = pd.read_excel(file_path, header=None)
-            logger.info(f"ExcelBIPSParser: успешно загружены BIPs из {file_path}")
-            return BIPS
-        except InvalidFileException:
-            logger.error("ExcelBIPSParser: ошибка при открытии файла.")
-            return None
-        except Exception as e:
-            logger.error(f"ExcelBIPSParser: произошла ошибка - {e}")
-            return None
 
-class ExcelParser(Parser):
-    def __init__(self):
-        self.data_parser = ExcelDataParser()
-        self.bips_parser = ExcelBIPSParser()
+class BIPsSRKParser:
+    def __init__(self, content, component_count):
+        self.content = content
+        self.component_count = component_count
 
-    def load_data(self, file_path: str, bips_path: Optional[str] = None) -> Optional[Dict]:
-        try:
-            data = self.data_parser.load_data(file_path)
-            if data is None:
-                logger.error("ExcelParser: Не удалось загрузить данные из Excel.")
-                return None
+    def parse(self):
+        # Ищем блок данных для SRK kij
+        match = re.search(r"<kij SRK>[\s\S]*?([\d.eE,+\s-]+)\n(?=<|$)", self.content)
+        if match:
+            raw_values = re.findall(r"-?[\d.eE+-]+", match.group(1))
+            expected_length = (self.component_count * (self.component_count - 1)) // 2
+            if len(raw_values) < 2 + expected_length:
+                logger.warning("Недостаточно данных для BIPs_SRK после тега <kij SRK>.")
+                return np.zeros(
+                    (self.component_count, self.component_count), dtype=np.float64
+                )
+            bips_values = np.array(
+                [float(value) for value in raw_values[2 : 2 + expected_length]],
+                dtype=np.float64,
+            )
+            if len(bips_values) != expected_length:
+                logger.warning(
+                    f"BIPs_SRK имеют длину {len(bips_values)}, ожидается {expected_length}."
+                )
+                return np.zeros(
+                    (self.component_count, self.component_count), dtype=np.float64
+                )
+            c_matrix = np.zeros(
+                (self.component_count, self.component_count), dtype=np.float64
+            )
+            k = 0
+            for i in range(1, self.component_count):
+                for j in range(0, i):
+                    c_matrix[i, j] = bips_values[k]
+                    c_matrix[j, i] = bips_values[k]
+                    k += 1
+            return c_matrix
+        else:
+            logger.warning("Тег <kij SRK> не найден в файле.")
+            return np.zeros(
+                (self.component_count, self.component_count), dtype=np.float64
+            )
 
-            BIPS = None
-            if bips_path:
-                BIPS = self.bips_parser.load_data(bips_path)
-                if BIPS is None:
-                    logger.error("ExcelParser: Не удалось загрузить данные BIPs из Excel.")
-                    return None
 
-            data['BIPs'] = BIPS
-            return data
-        except Exception as e:
-            logger.error(f"ExcelParser: произошла ошибка - {e}")
-            return None
+class BIPsPRParser:
+    def __init__(self, content, component_count):
+        self.content = content
+        self.component_count = component_count
 
-# === Абстрактный Экстрактор для CHC ===
+    def parse(self):
+        # Ищем блок данных для PR kij
+        match = re.search(r"<kij PR>[\s\S]*?([\d.eE,+\s-]+)\n(?=<|$)", self.content)
+        if match:
+            raw_values = re.findall(r"-?[\d.eE+-]+", match.group(1))
+            expected_length = (self.component_count * (self.component_count - 1)) // 2
+            if len(raw_values) < 2 + expected_length:
+                logger.warning("Недостаточно данных для BIPs_PR после тега <kij PR>.")
+                return np.zeros(
+                    (self.component_count, self.component_count), dtype=np.float64
+                )
+            bips_values = np.array(
+                [float(value) for value in raw_values[2 : 2 + expected_length]],
+                dtype=np.float64,
+            )
+            if len(bips_values) != expected_length:
+                logger.warning(
+                    f"BIPs_PR имеют длину {len(bips_values)}, ожидается {expected_length}."
+                )
+                return np.zeros(
+                    (self.component_count, self.component_count), dtype=np.float64
+                )
+            c_matrix = np.zeros(
+                (self.component_count, self.component_count), dtype=np.float64
+            )
+            k = 0
+            for i in range(1, self.component_count):
+                for j in range(0, i):
+                    c_matrix[i, j] = bips_values[k]
+                    c_matrix[j, i] = bips_values[k]
+                    k += 1
+            return c_matrix
+        else:
+            logger.warning("Тег <kij PR> не найден в файле.")
+            return np.zeros(
+                (self.component_count, self.component_count), dtype=np.float64
+            )
+
+
+# === Конкретные Экстракторы CHC ===
 class CHCExtractor(ABC):
     def __init__(self, content: str):
         self.content = content
@@ -125,18 +215,21 @@ class CHCExtractor(ABC):
     def extract(self):
         pass
 
-# === Конкретные Экстракторы CHC ===
+
 class ShortCompNameExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[str]]:
         match = re.search(r"<Short Comp Name>\s*([\s\S]*?)\n(?=<|$)", self.content)
         if match:
             raw_list = re.findall(r'"([^"]+)"', match.group(1))
             component_names = [item.strip() for item in raw_list]
-            logger.info("ShortCompNameExtractor: успешно извлечены component_name")
-            return {'component_name': component_names}
+            logger.info(
+                f"ShortCompNameExtractor: успешно извлечены {len(component_names)} component_name"
+            )
+            return {"component_name": component_names}
         else:
             logger.warning("Тег <Short Comp Name> не найден в файле.")
-            return {'component_name': []}
+            return {"component_name": []}
+
 
 class CompAmountExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
@@ -144,11 +237,12 @@ class CompAmountExtractor(CHCExtractor):
         if match:
             raw_values = re.findall(r"[\d.]+", match.group(1))
             z = [float(value) for value in raw_values][2:]
-            logger.info("CompAmountExtractor: успешно извлечены z")
-            return {'z': z}
+            logger.info(f"CompAmountExtractor: успешно извлечены {len(z)}z")
+            return {"z": z}
         else:
             logger.warning("Тег <Comp Amount> не найден в файле.")
-            return {'z': []}
+            return {"z": []}
+
 
 class MolecularWeightsExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
@@ -156,11 +250,14 @@ class MolecularWeightsExtractor(CHCExtractor):
         if match:
             raw_values = re.findall(r"[\d.]+", match.group(1))
             mass = [float(value) for value in raw_values][2:]
-            logger.info("MolecularWeightsExtractor: успешно извлечены mass")
-            return {'mass': mass}
+            logger.info(
+                f"MolecularWeightsExtractor: успешно извлечены {len(mass)} mass"
+            )
+            return {"mass": mass}
         else:
             logger.warning("Тег <Mwn> не найден в файле.")
-            return {'mass': []}
+            return {"mass": []}
+
 
 class CriticalPressureExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
@@ -169,11 +266,14 @@ class CriticalPressureExtractor(CHCExtractor):
             raw_values = re.findall(r"[\d.]+", match.group(1))
             pressures_atm = [float(value) for value in raw_values][2:]
             pressures_mpa = [value * 0.101325 for value in pressures_atm]
-            logger.info("CriticalPressureExtractor: успешно извлечены Pkr")
-            return {'Pkr': pressures_mpa}
+            logger.info(
+                f"CriticalPressureExtractor: успешно извлечены {len(pressures_mpa)} Pkr"
+            )
+            return {"Pkr": pressures_mpa}
         else:
             logger.warning("Тег <Pc> не найден в файле.")
-            return {'Pkr': []}
+            return {"Pkr": []}
+
 
 class CriticalTemperatureExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
@@ -181,11 +281,14 @@ class CriticalTemperatureExtractor(CHCExtractor):
         if match:
             raw_values = re.findall(r"[\d.]+", match.group(1))
             temperatures = [float(value) for value in raw_values][2:]
-            logger.info("CriticalTemperatureExtractor: успешно извлечены Tkr")
-            return {'Tkr': temperatures}
+            logger.info(
+                f"CriticalTemperatureExtractor: успешно извлечены {len(temperatures)} Tkr"
+            )
+            return {"Tkr": temperatures}
         else:
             logger.warning("Тег <Tc> не найден в файле.")
-            return {'Tkr': []}
+            return {"Tkr": []}
+
 
 class CriticalVolumeExtractor(CHCExtractor):
     R = 0.082057  # Газовая постоянная в L·atm/(K·mol)
@@ -196,23 +299,27 @@ class CriticalVolumeExtractor(CHCExtractor):
             raw_values = re.findall(r"[\d.]+", match.group(1))
             vc_over_r = [float(value) for value in raw_values][2:]
             vc = [value * self.R * 1000 for value in vc_over_r]
-            logger.info("CriticalVolumeExtractor: успешно извлечены Vkr")
-            return {'Vkr': vc}
+            logger.info(f"CriticalVolumeExtractor: успешно извлечены {len(vc)} Vkr")
+            return {"Vkr": vc}
         else:
             logger.warning("Тег <Vc> не найден в файле.")
-            return {'Vkr': []}
+            return {"Vkr": []}
+
 
 class AcentricFactorExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
-        match = re.search(r"<Acentric Factor>[\s\S]*?([\d.,\s]+)\n(?=<|$)", self.content)
+        match = re.search(
+            r"<Acentric Factor>[\s\S]*?([\d.,\s]+)\n(?=<|$)", self.content
+        )
         if match:
             raw_values = re.findall(r"[\d.]+", match.group(1))
             w = [float(value) for value in raw_values][2:]
-            logger.info("AcentricFactorExtractor: успешно извлечены w")
-            return {'w': w}
+            logger.info(f"AcentricFactorExtractor: успешно извлечены {len(w)} w")
+            return {"w": w}
         else:
             logger.warning("Тег <Acentric Factor> не найден в файле.")
-            return {'w': []}
+            return {"w": []}
+
 
 class BoilingTemperatureExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
@@ -220,23 +327,31 @@ class BoilingTemperatureExtractor(CHCExtractor):
         if match:
             raw_values = re.findall(r"[\d.]+", match.group(1))
             T_boil = [float(value) for value in raw_values][2:]
-            logger.info("BoilingTemperatureExtractor: успешно извлечены T_boil")
-            return {'T_boil': T_boil}
+            logger.info(
+                f"BoilingTemperatureExtractor: успешно извлечены {len(T_boil)} T_boil"
+            )
+            return {"T_boil": T_boil}
         else:
             logger.warning("Тег <Tb> не найден в файле.")
-            return {'T_boil': []}
+            return {"T_boil": []}
+
 
 class LiquidDensityExtractor(CHCExtractor):
     def extract(self) -> Dict[str, List[float]]:
         match = re.search(r"<Density>[\s\S]*?([\d.eE,+\s-]+)\n(?=<|$)", self.content)
         if match:
             raw_values = re.findall(r"-?[\d.eE+-]+", match.group(1))
-            density = [float(value) if float(value) > 0 else 0 for value in raw_values][2:]
-            logger.info("LiquidDensityExtractor: успешно извлечены density_liq_phase")
-            return {'density_liq_phase': density}
+            density = [float(value) if float(value) > 0 else 0 for value in raw_values][
+                2:
+            ]
+            logger.info(
+                f"LiquidDensityExtractor: успешно извлечены {len(density)} density_liq_phase"
+            )
+            return {"density_liq_phase": density}
         else:
             logger.warning("Тег <Density> не найден в файле.")
-            return {'density_liq_phase': []}
+            return {"density_liq_phase": []}
+
 
 class CpenSRKExtractor(CHCExtractor):
     R = 0.082057  # Газовая постоянная в L·atm/(K·mol)
@@ -247,11 +362,12 @@ class CpenSRKExtractor(CHCExtractor):
             raw_values = re.findall(r"-?[\d.eE+-]+", match.group(1))
             cpen_srk_over_r = [float(value) for value in raw_values][2:]
             cpen = [value * self.R * 1000 for value in cpen_srk_over_r]
-            logger.info("CpenSRKExtractor: успешно извлечены cpen")
-            return {'cpen': cpen}
+            logger.info(f"CpenSRKExtractor: успешно извлечены {len(cpen)} cpen")
+            return {"cpen": cpen}
         else:
             logger.warning("Тег <Cpen SRK> не найден в файле.")
-            return {'cpen': []}
+            return {"cpen": []}
+
 
 class CpenPRExtractor(CHCExtractor):
     R = 0.082057  # Газовая постоянная в L·atm/(K·mol)
@@ -262,11 +378,12 @@ class CpenPRExtractor(CHCExtractor):
             raw_values = re.findall(r"-?[\d.eE+-]+", match.group(1))
             cpen_pr_over_r = [float(value) for value in raw_values][2:]
             cpen_pr = [value * self.R * 1000 for value in cpen_pr_over_r]
-            logger.info("CpenPRExtractor: успешно извлечены cpen")
-            return {'cpen': cpen_pr}
+            logger.info(f"CpenPRExtractor: успешно извлечены {len(cpen_pr)} cpen")
+            return {"cpen": cpen_pr}
         else:
             logger.warning("Тег <Cpen PR> не найден в файле.")
-            return {'cpen': []}
+            return {"cpen": []}
+
 
 # === Парсеры PVTSim для SRK и PR ===
 class PVTSimParserSRK(Parser):
@@ -278,10 +395,17 @@ class PVTSimParserSRK(Parser):
             logger.error(f"{self.__class__.__name__}: файл {file_path} не найден.")
             return None
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: ошибка при чтении файла {file_path}: {e}")
+            logger.error(
+                f"{self.__class__.__name__}: ошибка при чтении файла {file_path}: {e}"
+            )
             return None
 
-        # Инициализируем экстракторы
+        # Определяем число компонентов
+        component_count_parser = ComponentCountParser(content)
+        component_count = component_count_parser.parse()
+        if component_count is None:
+            return None
+
         extractors = [
             ShortCompNameExtractor(content),
             CompAmountExtractor(content),
@@ -292,19 +416,26 @@ class PVTSimParserSRK(Parser):
             AcentricFactorExtractor(content),
             BoilingTemperatureExtractor(content),
             LiquidDensityExtractor(content),
-            CpenSRKExtractor(content)
+            CpenSRKExtractor(content),
         ]
 
-        # Собираем данные
         data = {}
         for extractor in extractors:
             extracted_data = extractor.extract()
             if isinstance(extracted_data, dict):
                 data.update(extracted_data)
-            else:
-                logger.warning(f"{extractor.__class__.__name__}: extract метод вернул некорректный тип данных.")
+
+        # Извлекаем BIPs для SRK
+        bips_srk_parser = BIPsSRKParser(content, component_count)
+        c_matrix_srk = bips_srk_parser.parse()
+        # Преобразуем в DataFrame
+        if c_matrix_srk.size > 0:
+            data["BIPs"] = pd.DataFrame(c_matrix_srk)
+        else:
+            data["BIPs"] = None
 
         return data
+
 
 class PVTSimParserPR(Parser):
     def load_data(self, file_path: str) -> Optional[Dict]:
@@ -315,10 +446,17 @@ class PVTSimParserPR(Parser):
             logger.error(f"{self.__class__.__name__}: файл {file_path} не найден.")
             return None
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: ошибка при чтении файла {file_path}: {e}")
+            logger.error(
+                f"{self.__class__.__name__}: ошибка при чтении файла {file_path}: {e}"
+            )
             return None
 
-        # Инициализируем экстракторы
+        # Определяем число компонентов
+        component_count_parser = ComponentCountParser(content)
+        component_count = component_count_parser.parse()
+        if component_count is None:
+            return None
+
         extractors = [
             ShortCompNameExtractor(content),
             CompAmountExtractor(content),
@@ -329,24 +467,33 @@ class PVTSimParserPR(Parser):
             AcentricFactorExtractor(content),
             BoilingTemperatureExtractor(content),
             LiquidDensityExtractor(content),
-            CpenPRExtractor(content)
+            CpenPRExtractor(content),
         ]
 
-        # Собираем данные
         data = {}
         for extractor in extractors:
             extracted_data = extractor.extract()
             if isinstance(extracted_data, dict):
                 data.update(extracted_data)
-            else:
-                logger.warning(f"{extractor.__class__.__name__}: extract метод вернул некорректный тип данных.")
+
+        # Извлекаем BIPs для PR
+        bips_pr_parser = BIPsPRParser(content, component_count)
+        c_matrix_pr = bips_pr_parser.parse()
+        # Преобразуем в DataFrame
+        if c_matrix_pr.size > 0:
+            data["BIPs"] = pd.DataFrame(c_matrix_pr)
+        else:
+            data["BIPs"] = None
 
         return data
+
 
 # === Маппер для данных ===
 class FluidMapper:
     @staticmethod
-    def map_to_fluid_dto(data: Dict, p: float, t: float, bips: Optional[pd.DataFrame] = None) -> FluidDTO:
+    def map_to_fluid_dto(
+        data: Dict, p: float, t: float, bips: Optional[pd.DataFrame] = None
+    ) -> FluidDTO:
         component_names = data.get("component_name", [])
         z = data.get("z", [])
         mass = data.get("mass", [])
@@ -359,12 +506,29 @@ class FluidMapper:
         density_liq_phase = data.get("density_liq_phase", [])
 
         num_components = len(component_names)
+        # Расширение массива 'w' ведущими нулями, если его длина меньше количества компонентов
+        if len(w) < num_components:
+            padding_length = num_components - len(w)
+            padding = [0.0] * padding_length
+            w = padding + w
+            logger.debug(
+                f"Массив 'w' был расширен {padding_length} ведущими нулями: {w}"
+            )
         # Проверка согласованности данных
-        for key, value in [("z", z), ("mass", mass), ("Pkr", Pkr), ("Tkr", Tkr),
-                           ("Vkr", Vkr), ("w", w), ("cpen", cpen),
-                           ("T_boil", T_boil), ("density_liq_phase", density_liq_phase)]:
+        for key, value in [
+            ("z", z),
+            ("mass", mass),
+            ("Pkr", Pkr),
+            ("Tkr", Tkr),
+            ("Vkr", Vkr),
+            ("cpen", cpen),
+            ("T_boil", T_boil),
+            ("density_liq_phase", density_liq_phase),
+        ]:
             if len(value) != num_components:
-                raise ValueError(f"Длина данных для {key} ({len(value)}) не совпадает с количеством компонентов ({num_components}).")
+                raise ValueError(
+                    f"Длина данных для {key} ({len(value)}) не совпадает с количеством компонентов ({num_components})."
+                )
 
         components = [
             FluidComponentDTO(
@@ -384,89 +548,62 @@ class FluidMapper:
         logger.info("FluidMapper: успешно преобразованы данные в FluidDTO")
         return FluidDTO(components=components, BIPs=bips, p=p, t=t)
 
+
 # === Универсальный обработчик данных ===
 class FluidDataProcessor:
     def __init__(self, parser: Parser):
         self.parser = parser
 
-    def process(self, file_path: str, p: float, t: float, bips_path: Optional[str] = None) -> FluidDTO:
+    def process(self, file_path: str, p: float, t: float) -> FluidDTO:
         # Загрузка данных
         data = self.parser.load_data(file_path)
         if not data:
             raise ValueError("Не удалось загрузить данные.")
 
-        # Загрузка BIPs, если указан путь
-        bips = None
-        if bips_path:
-            if isinstance(self.parser, ExcelParser):
-                bips = data.get('BIPs')
-                if bips is None:
-                    raise ValueError("Не удалось загрузить данные BIPs из Excel.")
-            else:
-                bips_parser = ExcelBIPSParser()
-                bips = bips_parser.load_data(bips_path)
-                if bips is None:
-                    raise ValueError("Не удалось загрузить данные BIPs.")
+        bips = data.get("BIPs")
 
         # Маппинг данных в FluidDTO
         return FluidMapper.map_to_fluid_dto(data, p, t, bips)
 
+
 # === Основной блок ===
 if __name__ == "__main__":
-    # === Обработка Excel данных ===
-    excel_parser = ExcelParser()
-    processor_excel = FluidDataProcessor(parser=excel_parser)
-    try:
-        fluid_excel = processor_excel.process(
-            file_path="data/input_data.xlsx",
-            p=15,
-            t=473.15,
-            bips_path=None  # Укажите путь к BIPs, если необходимо
-        )
-        calculated_SRK_Peneloux_excel = SRK_peneloux_Flash(fluid_excel)
-        srk_peneloux_excel = calculated_SRK_Peneloux_excel.calculate()
+    # Получаем пути
+    project_root, mixtures_path, data_path = get_project_paths()
 
-        print("Результаты из Excel данных:")
-        for each_elem in srk_peneloux_excel:
-            print(f"{each_elem}")
-    except ValueError as ve:
-        logger.error(f"Ошибка при обработке Excel данных: {ve}")
+    # Формируем полный путь к CHC-файлу
+    chc_file_path = mixtures_path / "FLASHtest4.CHC"
 
-    # === Обработка CHC данных для SRK ===
-    chc_file_path = "Mixture1 (1).CHC"
+    # Проверяем существование файла CHC
+    if not chc_file_path.exists():
+        logger.error(f"Файл {chc_file_path} не существует!")
+        logger.info(f"Текущая директория: {os.getcwd()}")
+        logger.info(f"Ожидаемый путь к файлу: {chc_file_path}")
+        raise FileNotFoundError(f"Файл {chc_file_path} не найден")
+
+    # Пример использования PVTSimParserSRK
     pvtsim_srk_parser = PVTSimParserSRK()
     processor_srk = FluidDataProcessor(parser=pvtsim_srk_parser)
-    try:
-        fluid_srk = processor_srk.process(
-            file_path=chc_file_path,
-            p=15,
-            t=473.15,
-            bips_path=None  # Укажите путь к BIPs, если необходимо
-        )
-        calculated_SRK_Peneloux_srk = SRK_peneloux_Flash(fluid_srk)
-        srk_peneloux_srk = calculated_SRK_Peneloux_srk.calculate()
 
-        print("\nРезультаты из CHC данных (SRK):")
-        for each_elem in srk_peneloux_srk:
-            print(f"{each_elem}")
-    except ValueError as ve:
-        logger.error(f"Ошибка при обработке CHC данных (SRK): {ve}")
+    # try:
+    # Процессинг данных из CHC
+    fluid_srk = processor_srk.process(file_path=str(chc_file_path), p=21, t=382.15)
+    print(fluid_srk.components)
+    # Передаем DTO в расчетный метод
+    calculated_PR = PRFlash(fluid_srk)
+    pr = calculated_PR.calculate()
 
-    # === Обработка CHC данных для PR ===
-    pvtsim_pr_parser = PVTSimParserPR()
-    processor_pr = FluidDataProcessor(parser=pvtsim_pr_parser)
-    try:
-        fluid_pr = processor_pr.process(
-            file_path=chc_file_path,
-            p=15,
-            t=473.15,
-            bips_path=None  # Укажите путь к BIPs, если необходимо
-        )
-        calculated_SRK_Peneloux_pr = SRK_peneloux_Flash(fluid_pr)
-        srk_peneloux_pr = calculated_SRK_Peneloux_pr.calculate()
+    calculated_SRK = SRKFlash(fluid_srk)
+    srk = calculated_SRK.calculate()
 
-        print("\nРезультаты из CHC данных (PR):")
-        for each_elem in srk_peneloux_pr:
-            print(f"{each_elem}")
-    except ValueError as ve:
-        logger.error(f"Ошибка при обработке CHC данных (PR): {ve}")
+    calculated_SRK_Peneloux = SRKPenelouxFlash(fluid_srk)
+    srk_peneloux_srk = calculated_SRK_Peneloux.calculate()
+
+    print(f"W (SRK_Peneloux): {srk_peneloux_srk}\n")
+    print(f"W (PR): {pr}\n")
+    print(f"W (SRK): {srk}\n")
+
+    # except ValueError as ve:
+    #     logger.error(f"Ошибка при обработке CHC данных (SRK): {ve}")
+    # except Exception as e:
+    #     logger.error(f"Неожиданная ошибка: {e}")

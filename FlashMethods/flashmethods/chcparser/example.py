@@ -1,10 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import PVTSimParser as prs
-from time import time
-from stable_and_flash import PTFlash
-from openpyxl import Workbook
 
+from time import time
+from openpyxl import Workbook
+from srk_peneloux_flash import SRKPenelouxFlash 
 
 # Инициализация парсера
 file_path = "mixtures/FLASHtest1.CHC"
@@ -31,7 +31,7 @@ for i in range(N):
     
 Ptest = 15
 Ttest = 473.15
-v = PTFlash(Fluid, BIPs=data_srk["BIPs_SRK"])
+v = SRKPenelouxFlash(Fluid, BIPs=data_srk["BIPs_SRK"])
 (
     W,
     Z_v,
