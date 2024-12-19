@@ -222,12 +222,13 @@ class EOSFlash(Flash):
                 m += 1
                 iteration_count += 1
 
-            return W, Z_v, Z_l, False
+            return W, Z_v, Z_l, False, m
         else:
             # Если стабильна или TestPTF
             # Аналогично логике из оригинала, выбор W, фаз.
+            m = 1
             W, Z_v, Z_l = self._choose_phase_if_stable()
-            return W, Z_v, Z_l, True
+            return W, Z_v, Z_l, True, m
 
     def _choose_best_K(self, K_iv, K_il):
         """
@@ -422,7 +423,7 @@ class EOSFlash(Flash):
         )
 
         # Этап 4: Выполнение Flash-расчёта при необходимости
-        W, Z_v, Z_l, stable_after_flash = self._perform_flash(
+        W, Z_v, Z_l, stable_after_flash, m = self._perform_flash(
             Stable, TestPTF, K_iv, K_il, a_i, b_i, c_params
         )
 
