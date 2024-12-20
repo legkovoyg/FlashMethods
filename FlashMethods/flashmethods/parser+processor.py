@@ -587,7 +587,7 @@ if __name__ == "__main__":
 
     # try:
     # Процессинг данных из CHC
-    fluid_srk = processor_srk.process(file_path=str(chc_file_path), p=21, t=382.15)
+    fluid_srk = processor_srk.process(file_path=str(chc_file_path), p=15, t=323.15)
     print(fluid_srk.components)
     # Передаем DTO в расчетный метод
     calculated_PR = PRFlash(fluid_srk)

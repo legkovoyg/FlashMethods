@@ -107,4 +107,63 @@ class SRKPenelouxFlash(EOSFlash):
         Расчёт энтальпии и теплоёмкостей на основе общей логики.
         return: enthalpy_w, Cp_w, Cv_w
         """
-        return 1, 1, 1
+        Tref = 273.15
+
+        # Вычисление разностей температур для степеней от 1 до 4 с помощью цикла
+        powers = [1, 2, 3, 4]
+        dT = [T ** p - Tref ** p for p in powers]
+
+        Hid = (
+                self._Cp1_id * dT[0]
+                + 0.5 * self._Cp2_id * dT[1]
+                + self._Cp3_id * dT[2] / 3
+                + 0.25 * self._Cp4_id * dT[3]
+        )
+
+        # Производные для Yi и ai
+        dYi_dT = -psi_i * np.power(self._Tkr * T, -0.5) * (1 + psi_i * (1 - np.sqrt(T / self._Tkr)))
+        d2Yi_dT2 = 0.5 * psi_i * np.power(self._Tkr, -0.5) * (1 + psi_i) * np.power(T, -1.5)
+
+        dai_dT = ac_i * dYi_dT
+        d2ai_dT2 = ac_i * d2Yi_dT2
+
+        R = self._R
+
+        # Вычисление am
+        am = (1 - BIPs) * np.sqrt(a_i[:, None] * a_i[None, :]) * molar_frac[None, :] * molar_frac[:, None]
+        am = np.sum(am)
+
+        # Производная am по T
+        dam_dT = (1 - BIPs) * np.power(a_i[:, None] * a_i[None, :], -0.5) * molar_frac[None, :] * molar_frac[:,
+                                                                                                  None] * (
+                         dai_dT[None, :] * a_i[:, None] + dai_dT[:, None] * a_i[None, :]
+                 )
+        dam_dT = 0.5 * np.sum(dam_dT)
+
+        dAm_dT = dam_dT * P / ((R ** 2) * (T ** 2))
+
+        bm = np.dot(molar_frac, b_i)
+        cm = np.dot(cpen, molar_frac)
+
+        Am = am * P / (R ** 2 * T ** 2)
+        Bm = bm * P / (R * T)
+        Cm = cm * P / (R * T)
+
+        # Расчёт остаточной энтальпии
+        H_residual = 1000 * R * T * (Z - 1 - ((Am - T * dAm_dT) / Bm) * np.log((Z + Cm + Bm) / (Z + Cm)))
+
+        enthalpy = H_residual + np.dot(molar_frac, Hid)
+
+        return enthalpy
+
+    def _calculate_Cp_Cv(
+            self, P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
+    ):
+        """
+        Расчёт энтальпии и теплоёмкостей на основе общей логики.
+        return: Cp_w, Cv_w
+        """
+        return 1,1
+
+
+
