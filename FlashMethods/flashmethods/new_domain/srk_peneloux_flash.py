@@ -160,10 +160,16 @@ class SRKPenelouxFlash(EOSFlash):
             self, P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
     ):
         """
-        Расчёт энтальпии и теплоёмкостей на основе общей логики.
+        Расчёт теплоёмкостей на основе общей логики.
         return: Cp_w, Cv_w
         """
         return 1,1
-
-
+    def _calculate_entropy(
+            self, P, T, molar_frac, a_i, BIPs, psi_i, ac_i, b_i, cpen, Z, constants
+    ):
+        """
+        Расчёт энтропии на основе общей логики.
+        return: entropy
+        """
+        return 1
 
